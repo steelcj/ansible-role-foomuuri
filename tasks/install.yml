@@ -1,0 +1,24 @@
+---
+
+- name: install | Install foomuuri
+  ansible.builtin.package:
+    name: "{{ foomuuri_packages }}"
+    state: present
+
+- name: install | Gather package facts
+  ansible.builtin.package_facts:
+    manager: auto
+
+- name: install | Record the installed foomuuri version
+  ansible.builtin.set_fact:
+    foomuuri_installed_version: "{{ ansible_facts['packages']['foomuuri'][0]['version'] | regex_replace('^([0-9.]+).*$', '\\1') }}"
+
+- name: install | Test the installed foomuuri version
+  ansible.builtin.assert:
+    that:
+      - foomuuri_installed_version is version(foomuuri_minimum_version, '>=')
+    fail_msg: "Foomuuri {{ foomuuri_installed_version }} is older than foomuuri_minimum_version ({{ foomuuri_minimum_version }})."
+    quiet: true
+
+- name: install | Gather service facts
+  ansible.builtin.service_facts:

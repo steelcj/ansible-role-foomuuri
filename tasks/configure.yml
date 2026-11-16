@@ -1,0 +1,261 @@
+---
+
+# Checks on this host's rules. These run per host because inventory layers
+# (foomuuri_rules__*) can differ between hosts.
+
+- name: configure | Test that every rule list is a list of strings
+  ansible.builtin.assert:
+    that:
+      - item.value is sequence
+      - item.value is not string
+      - item.value | reject('string') | list | length == 0
+    fail_msg: "Rules for section {{ item.key }} must be a list of strings."
+    quiet: true
+  loop: "{{ _foomuuri_rules_merged | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: configure | Test that terminal rules are last in their section
+  ansible.builtin.assert:
+    that:
+      - item.value[:-1] | select('match', _foomuuri_terminal_regex) | list | length == 0
+    fail_msg: "Section {{ item.key }} has a terminal rule (accept, drop or reject) before its last rule. Later rules would never be reached."
+    quiet: true
+  loop: "{{ _foomuuri_rules_merged | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+# Read what is on the host now.
+
+- name: configure | Create the managed directory
+  ansible.builtin.file:
+    path: "{{ foomuuri_managed_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: configure | Find all configuration files
+  ansible.builtin.find:
+    paths: "{{ foomuuri_etc_dir }}"
+    patterns:
+      - "*.conf"
+      - "*.nft"
+    recurse: true
+    file_type: file
+  register: _foomuuri_all_found
+
+- name: configure | Find managed files
+  ansible.builtin.find:
+    paths: "{{ foomuuri_etc_dir }}"
+    patterns:
+      - "*.conf"
+      - "*.nft"
+    recurse: true
+    file_type: file
+    contains: "^{{ _foomuuri_marker }}"
+  register: _foomuuri_managed_found
+
+- name: configure | Read managed files
+  ansible.builtin.slurp:
+    src: "{{ item.path }}"
+  loop: "{{ _foomuuri_managed_found.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  register: _foomuuri_managed_content
+
+- name: configure | Describe managed files
+  ansible.builtin.set_fact:
+    _foomuuri_existing: >-
+      {%- set ns = namespace(out=[]) -%}
+      {%- for result in _foomuuri_managed_content.results -%}
+      {%- set text = result.content | b64decode -%}
+      {%- set fragment = ((text | regex_search('^# Managed by ansible-role-foomuuri, fragment ([0-9a-z-]+)[.]', '\\1', multiline=True)) or [''])[0] -%}
+      {%- set sections = ((text | regex_search('^# foomuuri-role-sections:(.*)$', '\\1', multiline=True)) or [''])[0] -%}
+      {%- set closed = ((text | regex_search('^# foomuuri-role-closed:(.*)$', '\\1', multiline=True)) or [''])[0] -%}
+      {%- set ssh = ((text | regex_search('^# foomuuri-role-ssh: *([a-z]+)', '\\1', multiline=True)) or ['no'])[0] -%}
+      {%- set ns.out = ns.out + [{
+            'path': result.item.path,
+            'fragment': fragment,
+            'main': result.item.path == foomuuri_managed_dir ~ '/' ~ fragment ~ '.conf',
+            'sections': sections.split(),
+            'closed': closed.split(),
+            'ssh': ssh == 'yes'
+          }] -%}
+      {%- endfor -%}
+      {{ ns.out }}
+
+# Decide what this run removes.
+
+- name: configure | Decide which files to remove
+  ansible.builtin.set_fact:
+    _foomuuri_remove_paths: >-
+      {%- set all_paths = _foomuuri_all_found.files | map(attribute='path') | list -%}
+      {%- set managed_paths = _foomuuri_existing | map(attribute='path') | list -%}
+      {%- set keep = [foomuuri_fragment] + foomuuri_keep_fragments -%}
+      {%- set write = ([_foomuuri_fragment_path] + _foomuuri_extra_paths) if foomuuri_fragment_state == 'present' else [] -%}
+      {%- set ns = namespace(out=[]) -%}
+      {%- if foomuuri_purge != 'none' -%}
+      {%- set ns.out = ns.out + (all_paths | difference(managed_paths)) -%}
+      {%- endif -%}
+      {%- for item in _foomuuri_existing -%}
+      {%- if item.fragment == foomuuri_fragment and item.path not in write -%}
+      {%- set ns.out = ns.out + [item.path] -%}
+      {%- elif foomuuri_purge == 'fragments' and item.fragment not in keep -%}
+      {%- set ns.out = ns.out + [item.path] -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ ns.out | difference(foomuuri_purge_exclude) | unique | list }}
+
+- name: configure | List the other fragments that remain
+  ansible.builtin.set_fact:
+    _foomuuri_others: "{{ _foomuuri_existing | selectattr('main') | rejectattr('fragment', 'equalto', foomuuri_fragment) | rejectattr('path', 'in', _foomuuri_remove_paths) | list }}"
+
+# Checks across fragments.
+
+- name: configure | Test that earlier fragments do not close sections this fragment adds to
+  ansible.builtin.assert:
+    that:
+      - item.closed | intersect(_foomuuri_sections) | length == 0
+    fail_msg: "Fragment {{ item.fragment }} ends section(s) {{ item.closed | intersect(_foomuuri_sections) | join(', ') }} with a terminal rule, so rules added here by {{ foomuuri_fragment }} would never be reached."
+    quiet: true
+  loop: "{{ _foomuuri_others | selectattr('fragment', 'lt', foomuuri_fragment) | list }}"
+  loop_control:
+    label: "{{ item.fragment }}"
+  when:
+    - foomuuri_fragment_state == "present"
+
+- name: configure | Test that this fragment does not close sections later fragments add to
+  ansible.builtin.assert:
+    that:
+      - _foomuuri_closed_sections | intersect(item.sections) | length == 0
+    fail_msg: "This fragment ({{ foomuuri_fragment }}) ends section(s) {{ _foomuuri_closed_sections | intersect(item.sections) | join(', ') }} with a terminal rule, so rules from {{ item.fragment }} would never be reached."
+    quiet: true
+  loop: "{{ _foomuuri_others | selectattr('fragment', 'gt', foomuuri_fragment) | list }}"
+  loop_control:
+    label: "{{ item.fragment }}"
+  when:
+    - foomuuri_fragment_state == "present"
+
+- name: configure | Test that SSH stays open across all fragments
+  ansible.builtin.assert:
+    that:
+      - (foomuuri_fragment_state == 'present' and _foomuuri_has_ssh | bool) or (_foomuuri_others | selectattr('ssh') | list | length > 0)
+    fail_msg: "After this run no fragment would allow SSH towards localhost. Add an ssh rule, or set foomuuri_require_ssh to false."
+    quiet: true
+  when:
+    - foomuuri_require_ssh
+
+# Stage the complete result and check it with Foomuuri before touching the
+# live configuration.
+
+- name: configure | Check the configuration in a staging directory
+  block:
+    # Staging tasks report no change, so a second run is idempotent.
+    - name: configure | Create a staging directory
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: foomuuri
+      register: _foomuuri_stage
+      changed_when: false
+
+    - name: configure | Create staging subdirectories
+      ansible.builtin.file:
+        path: "{{ _foomuuri_stage.path }}/{{ item }}"
+        state: directory
+        mode: "0700"
+      loop:
+        - etc
+        - state
+      changed_when: false
+
+    - name: configure | Copy the live configuration into staging
+      ansible.builtin.copy:
+        src: "{{ foomuuri_etc_dir }}/"
+        dest: "{{ _foomuuri_stage.path }}/etc/"
+        remote_src: true
+        mode: preserve
+      changed_when: false
+
+    - name: configure | Remove files from staging that this run removes
+      ansible.builtin.file:
+        path: "{{ item | replace(foomuuri_etc_dir, _foomuuri_stage.path ~ '/etc', 1) }}"
+        state: absent
+      loop: "{{ _foomuuri_remove_paths }}"
+      changed_when: false
+
+    - name: configure | Render the fragment into staging
+      ansible.builtin.template:
+        src: fragment.conf.j2
+        dest: "{{ _foomuuri_fragment_path | replace(foomuuri_etc_dir, _foomuuri_stage.path ~ '/etc', 1) }}"
+        mode: "0640"
+      when:
+        - foomuuri_fragment_state == "present"
+      changed_when: false
+
+    - name: configure | Write extra files into staging
+      ansible.builtin.copy:
+        content: "{{ _foomuuri_marker_line }}\n{{ item.content }}"
+        dest: "{{ (foomuuri_managed_dir ~ '/' ~ foomuuri_fragment ~ '--' ~ item.name) | replace(foomuuri_etc_dir, _foomuuri_stage.path ~ '/etc', 1) }}"
+        mode: "0640"
+      loop: "{{ foomuuri_files }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when:
+        - foomuuri_fragment_state == "present"
+      changed_when: false
+
+    - name: configure | Check the staged configuration
+      ansible.builtin.command:
+        argv:
+          - "{{ foomuuri_binary }}"
+          - "--set=etc_dir={{ _foomuuri_stage.path }}/etc"
+          - "--set=state_dir={{ _foomuuri_stage.path }}/state"
+          - check
+      changed_when: false
+
+  always:
+    - name: configure | Remove the staging directory
+      ansible.builtin.file:
+        path: "{{ _foomuuri_stage.path }}"
+        state: absent
+      when:
+        - _foomuuri_stage.path is defined
+      changed_when: false
+
+# Deploy. Only reached when the staged check passed.
+
+- name: configure | Write the fragment
+  ansible.builtin.template:
+    src: fragment.conf.j2
+    dest: "{{ _foomuuri_fragment_path }}"
+    owner: root
+    group: root
+    mode: "0640"
+  when:
+    - foomuuri_fragment_state == "present"
+  notify:
+    - Reload foomuuri
+
+- name: configure | Write extra files
+  ansible.builtin.copy:
+    content: "{{ _foomuuri_marker_line }}\n{{ item.content }}"
+    dest: "{{ foomuuri_managed_dir }}/{{ foomuuri_fragment }}--{{ item.name }}"
+    owner: root
+    group: root
+    mode: "0640"
+  loop: "{{ foomuuri_files }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - foomuuri_fragment_state == "present"
+  notify:
+    - Reload foomuuri
+
+- name: configure | Remove files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ _foomuuri_remove_paths }}"
+  notify:
+    - Reload foomuuri

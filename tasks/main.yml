@@ -1,0 +1,79 @@
+---
+# tasks file for foomuuri
+
+- name: Import assert.yml
+  ansible.builtin.import_tasks:
+    file: assert.yml
+  run_once: true
+  delegate_to: localhost
+
+- name: Test if the platform is supported
+  ansible.builtin.assert:
+    that:
+      - _foomuuri_platform in _foomuuri_supported_platforms
+    fail_msg: "{{ _foomuuri_platform }} is not supported. Supported: {{ _foomuuri_supported_platforms | join(', ') }}."
+    quiet: true
+
+- name: Import install.yml
+  ansible.builtin.import_tasks:
+    file: install.yml
+
+- name: Import configure.yml
+  ansible.builtin.import_tasks:
+    file: configure.yml
+
+# Create, then remove: Foomuuri's table is loaded before any other firewall is
+# switched off. While both are active the host enforces the stricter of the
+# two, so it is never unfiltered.
+
+# `foomuuri.service` wants `foomuuri-dbus.service`, so the handler is masked
+# before Foomuuri starts. The unit has no install section, so it is never
+# enabled or disabled, only masked.
+- name: Stop and mask foomuuri-dbus
+  ansible.builtin.systemd_service:
+    name: foomuuri-dbus
+    state: stopped
+    masked: true
+  when:
+    - not foomuuri_dbus
+    - ansible_connection not in foomuuri_skip_connections
+    - "'foomuuri-dbus.service' in ansible_facts['services']"
+
+- name: Start and enable foomuuri
+  ansible.builtin.service:
+    name: foomuuri
+    state: started
+    enabled: true
+  when:
+    - ansible_connection not in foomuuri_skip_connections
+
+# Foomuuri may already have been running with an older configuration. Reload
+# now, so that the configuration written by this run is in force before other
+# firewalls are switched off.
+- name: Flush handlers
+  ansible.builtin.meta: flush_handlers
+
+# Unmasking alone does not start the handler when Foomuuri is already running.
+- name: Unmask and start foomuuri-dbus
+  ansible.builtin.systemd_service:
+    name: foomuuri-dbus
+    state: started
+    masked: false
+  when:
+    - foomuuri_dbus
+    - ansible_connection not in foomuuri_skip_connections
+    - "'foomuuri-dbus.service' in ansible_facts['services']"
+
+- name: Enable foomuuri-boot
+  ansible.builtin.service:
+    name: foomuuri-boot
+    enabled: true
+  when:
+    - ansible_connection not in foomuuri_skip_connections
+    - "'foomuuri-boot.service' in ansible_facts['services']"
+
+- name: Import conflicts.yml
+  ansible.builtin.import_tasks:
+    file: conflicts.yml
+  when:
+    - foomuuri_disable_conflicting

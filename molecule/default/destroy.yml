@@ -1,0 +1,33 @@
+---
+- name: Destroy
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    incus_project: fw-test
+
+  tasks:
+    - name: Delete instances
+      ansible.builtin.command:
+        argv:
+          - incus
+          - delete
+          - --force
+          - "{{ item.name }}"
+          - --project
+          - "{{ incus_project }}"
+      loop: "{{ molecule_yml.platforms }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: _delete
+      changed_when: _delete.rc == 0
+      failed_when:
+        - _delete.rc != 0
+        - "'not found' not in _delete.stderr"
+
+    - name: Clear the instance configuration
+      ansible.builtin.copy:
+        content: "[]\n"
+        dest: "{{ molecule_instance_config }}"
+        mode: "0600"

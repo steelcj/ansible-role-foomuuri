@@ -1,0 +1,69 @@
+---
+
+- name: assert | Test foomuuri_fragment
+  ansible.builtin.assert:
+    that:
+      - foomuuri_fragment is defined
+      - foomuuri_fragment is string
+      - foomuuri_fragment is match('^[0-9]{2}-[a-z0-9][a-z0-9-]*$')
+    fail_msg: "foomuuri_fragment must be two digits, a dash, then lowercase letters, digits or dashes, for example 20-web."
+    quiet: true
+
+- name: assert | Test foomuuri_base_fragment
+  ansible.builtin.assert:
+    that:
+      - foomuuri_base_fragment is defined
+      - foomuuri_base_fragment is string
+      - foomuuri_base_fragment is match('^[0-9]{2}-[a-z0-9][a-z0-9-]*$')
+    quiet: true
+
+- name: assert | Test foomuuri_fragment_state
+  ansible.builtin.assert:
+    that:
+      - foomuuri_fragment_state is defined
+      - foomuuri_fragment_state in [ "present", "absent" ]
+    quiet: true
+
+- name: assert | Test foomuuri_purge
+  ansible.builtin.assert:
+    that:
+      - foomuuri_purge is defined
+      - foomuuri_purge in [ "unmanaged", "fragments", "none" ]
+    quiet: true
+
+- name: assert | Test foomuuri_zones
+  ansible.builtin.assert:
+    that:
+      - foomuuri_zones is mapping
+      - "'localhost' in foomuuri_zones"
+    fail_msg: "foomuuri_zones must be a mapping and must include localhost."
+    quiet: true
+  when:
+    - _foomuuri_is_base | bool
+
+- name: assert | Test foomuuri_config has no forwarding option
+  ansible.builtin.assert:
+    that:
+      - "'ip_forward' not in foomuuri_config"
+    fail_msg: "Foomuuri has no ip_forward option. Forwarding is a sysctl, set it with ansible.posix.sysctl."
+    quiet: true
+
+- name: assert | Test foomuuri_files
+  ansible.builtin.assert:
+    that:
+      - item.name is defined
+      - item.name is match('^[A-Za-z0-9_.-]+\.(conf|nft)$')
+      - item.content is defined
+      - item.content is string
+    fail_msg: "Each item in foomuuri_files needs a plain file name ending in .conf or .nft, and content."
+    quiet: true
+  loop: "{{ foomuuri_files }}"
+  loop_control:
+    label: "{{ item.name | default('unnamed') }}"
+
+- name: assert | Test foomuuri_keep_fragments
+  ansible.builtin.assert:
+    that:
+      - foomuuri_keep_fragments is sequence
+      - foomuuri_keep_fragments is not string
+    quiet: true

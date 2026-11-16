@@ -1,0 +1,60 @@
+---
+- name: Verify
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Check the live configuration
+      ansible.builtin.command:
+        cmd: /usr/sbin/foomuuri check
+      changed_when: false
+
+    - name: Read the loaded ruleset
+      ansible.builtin.command:
+        cmd: nft list table inet foomuuri
+      register: _ruleset
+      changed_when: false
+
+    - name: Test that port 22 is accepted
+      ansible.builtin.assert:
+        that:
+          - _ruleset.stdout is search(_port_regex | format(22))
+        fail_msg: "Port 22 is not accepted in the loaded ruleset."
+        quiet: true
+      vars:
+        _port_regex: 'tcp dport ({[^}]*\D)?%d(\D|$)'
+
+    - name: Test that port 80 is not accepted
+      ansible.builtin.assert:
+        that:
+          - _ruleset.stdout is not search(_port_regex | format(80))
+        fail_msg: "Port 80 is accepted in the loaded ruleset, but only port 22 should be."
+        quiet: true
+      vars:
+        _port_regex: 'tcp dport ({[^}]*\D)?%d(\D|$)'
+
+    - name: Read ufw status
+      ansible.builtin.command:
+        cmd: ufw status
+      register: _ufw
+      changed_when: false
+
+    - name: Test that ufw is inactive
+      ansible.builtin.assert:
+        that:
+          - "'Status: inactive' in _ufw.stdout"
+        quiet: true
+
+    - name: Gather service facts
+      ansible.builtin.service_facts:
+
+    - name: Test that foomuuri-dbus is masked and not running
+      ansible.builtin.assert:
+        that:
+          - _dbus.get('status') == 'masked'
+          - _dbus.get('state') != 'running'
+        fail_msg: "foomuuri-dbus.service is {{ _dbus.get('status') }} and {{ _dbus.get('state') }}, expected masked and not running."
+        quiet: true
+      vars:
+        _dbus: "{{ ansible_facts['services'].get('foomuuri-dbus.service', {}) }}"

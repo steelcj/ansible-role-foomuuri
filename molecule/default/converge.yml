@@ -1,0 +1,11 @@
+---
+- name: Converge
+  hosts: all
+  become: true
+  gather_facts: true
+
+  roles:
+    # Step one: the base fragment only. It allows SSH on port 22, as a raw
+    # node does at handoff.
+    - role: steelcj.foomuuri
+      foomuuri_fragment: 10-base

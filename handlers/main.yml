@@ -1,0 +1,11 @@
+---
+# handlers file for foomuuri
+
+# Reload replaces the ruleset atomically. Restart would run `foomuuri stop`
+# first and leave the host unfiltered for a moment, so it is never used.
+- name: Reload foomuuri
+  ansible.builtin.service:
+    name: foomuuri
+    state: reloaded
+  when:
+    - ansible_connection not in foomuuri_skip_connections

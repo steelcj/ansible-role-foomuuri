@@ -1,0 +1,12 @@
+---
+exclude_paths:
+  - molecule/default/prepare.yml
+  - molecule/default/converge.yml
+  - molecule/default/verify.yml
+  - molecule/default/create.yml
+  - molecule/default/destroy.yml
+  - .cache
+  - requirements.yml
+
+enable_list:
+  - name[prefix]
