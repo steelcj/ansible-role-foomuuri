@@ -1,36 +1,36 @@
 ---
-#
-# Molecule runs against Incus system containers by default. Set
-# `incus_vm: true` on a platform to run it as an Incus VM instead.
-# create.yml and destroy.yml drive the `incus` command line.
-#
-# Linux Mint 22.3 is built on Ubuntu 24.04. If the Incus image server has no
-# Mint image, build one from images:ubuntu/24.04 with Mint's repositories
-# added, publish it locally, and add it as a platform:
-#   - name: "foomuuri-mint-22"
-#     image: "local:mint-22.3"
-#
+# Runs the role against an Incus system container on the machine running
+# Molecule. Needs the incus client, permission to use it, and the
+# community.general collection for the incus connection plugin.
 dependency:
   name: galaxy
   options:
-    role-file: requirements.yml
     requirements-file: requirements.yml
 driver:
   name: default
   options:
     managed: true
 platforms:
-  - name: "foomuuri-debian-13"
-    image: "images:debian/13"
-  - name: "foomuuri-ubuntu-2404"
-    image: "images:ubuntu/24.04"
+  - name: foomuuri-debian13
+    image: images:debian/13
 provisioner:
   name: ansible
-  inventory:
-    group_vars:
-      all:
-        ansible_connection: community.general.incus
-        ansible_incus_project: fw-test
-        ansible_python_interpreter: /usr/bin/python3
+  playbooks:
+    create: create.yml
+    prepare: prepare.yml
+    converge: converge.yml
+    verify: verify.yml
+    destroy: destroy.yml
 verifier:
   name: ansible
+scenario:
+  test_sequence:
+    - dependency
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - verify
+    - destroy

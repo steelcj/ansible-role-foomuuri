@@ -1,90 +1,31 @@
 ---
 # vars file for foomuuri
 
-# Platforms this release supports, by `distribution-major_version`.
-_foomuuri_supported_platforms:
-  - Debian-13
-  - Ubuntu-24
-  - Linux Mint-22
+# Packages that manage the same nftables ruleset and must not run beside
+# Foomuuri.
+_foomuuri_packages_conflicting:
+  default:
+    - ufw
+    - firewalld
 
-_foomuuri_platform: "{{ ansible_facts['distribution'] ~ '-' ~ ansible_facts['distribution_major_version'] }}"
+foomuuri_packages_conflicting: "{{ _foomuuri_packages_conflicting[ansible_facts['distribution'] ~ '-' ~ ansible_facts['distribution_major_version']] | default(_foomuuri_packages_conflicting[ansible_facts['distribution']] | default(_foomuuri_packages_conflicting[ansible_facts['os_family']] | default(_foomuuri_packages_conflicting['default']))) }}"
 
 _foomuuri_packages:
   default:
     - foomuuri
+
 foomuuri_packages: "{{ _foomuuri_packages[ansible_facts['distribution'] ~ '-' ~ ansible_facts['distribution_major_version']] | default(_foomuuri_packages[ansible_facts['distribution']] | default(_foomuuri_packages[ansible_facts['os_family']] | default(_foomuuri_packages['default']))) }}"
 
-_foomuuri_binary:
-  default: /usr/sbin/foomuuri
-foomuuri_binary: "{{ _foomuuri_binary[ansible_facts['distribution'] ~ '-' ~ ansible_facts['distribution_major_version']] | default(_foomuuri_binary[ansible_facts['distribution']] | default(_foomuuri_binary[ansible_facts['os_family']] | default(_foomuuri_binary['default']))) }}"
+foomuuri_service: foomuuri
 
-_foomuuri_conflicting_services:
-  default:
-    - ufw
-    - firewalld
-    - nftables
-    - netfilter-persistent
-    - iptables
-    - ip6tables
-foomuuri_conflicting_services: "{{ _foomuuri_conflicting_services[ansible_facts['distribution'] ~ '-' ~ ansible_facts['distribution_major_version']] | default(_foomuuri_conflicting_services[ansible_facts['distribution']] | default(_foomuuri_conflicting_services[ansible_facts['os_family']] | default(_foomuuri_conflicting_services['default']))) }}"
-
-# Paths.
 foomuuri_etc_dir: /etc/foomuuri
-foomuuri_managed_dir: "{{ foomuuri_etc_dir }}/ansible"
-_foomuuri_fragment_path: "{{ foomuuri_managed_dir }}/{{ foomuuri_fragment }}.conf"
 
-# First line of every file the role writes. Purge uses it to tell managed
-# files from others, so do not change it between releases.
-_foomuuri_marker: "# Managed by ansible-role-foomuuri"
-_foomuuri_marker_line: "{{ _foomuuri_marker }}, fragment {{ foomuuri_fragment }}. Do not edit."
+# The fragments and files this call manages, as paths relative to
+# foomuuri_etc_dir. Everything else is purged when foomuuri_purge is unmanaged.
+foomuuri_managed_files: "{{ ([foomuuri_fragment] + foomuuri_keep_fragments) | map('regex_replace', '^(.*?)(\\.conf)?$', '\\1.conf') | list + (foomuuri_files | map(attribute='name') | list) + foomuuri_purge_exclude }}"
 
-# A rule made only of a terminal statement, optionally with log and a message.
-_foomuuri_terminal_regex: '^(accept|drop|reject)(\s+log(\s.*)?)?$'
-
-# An SSH rule, by macro name or by port.
-_foomuuri_ssh_regex: '^ssh(\s|$)|(^|\s)tcp\s+(dport\s+)?22(\s|$)'
-
-_foomuuri_is_base: "{{ foomuuri_fragment == foomuuri_base_fragment }}"
-
-# Inventory layers: foomuuri_rules__<layer>, applied in name order.
-_foomuuri_rules_layer_names: "{{ query('ansible.builtin.varnames', '^foomuuri_rules__.+') | sort }}"
-_foomuuri_rules_layers: "{{ query('ansible.builtin.vars', *_foomuuri_rules_layer_names) if _foomuuri_rules_layer_names | length > 0 else [] }}"
-
-# All rules for this fragment: base rules (base fragment only), then
-# foomuuri_rules, then each layer. Lists are joined and exact duplicates
-# removed, keeping the first one seen.
-_foomuuri_rules_merged: >-
-  {%- set ns = namespace(out={}) -%}
-  {%- set sources = ([foomuuri_base_rules] if _foomuuri_is_base | bool else []) + [foomuuri_rules] + _foomuuri_rules_layers -%}
-  {%- for source in sources -%}
-  {%- for section, rules in source.items() -%}
-  {%- set _ = ns.out.update({section: (ns.out.get(section, []) + rules) | unique | list}) -%}
-  {%- endfor -%}
-  {%- endfor -%}
-  {{ ns.out }}
-
-# Sections this fragment writes rules to.
-_foomuuri_sections: "{{ _foomuuri_rules_merged.keys() | list }}"
-
-# Sections this fragment closes with a terminal rule.
-_foomuuri_closed_sections: >-
-  {%- set ns = namespace(out=[]) -%}
-  {%- for section, rules in _foomuuri_rules_merged.items() -%}
-  {%- if rules | length > 0 and rules[-1] is match(_foomuuri_terminal_regex) -%}
-  {%- set ns.out = ns.out + [section] -%}
-  {%- endif -%}
-  {%- endfor -%}
-  {{ ns.out }}
-
-# Whether this fragment has an SSH rule in a section towards localhost.
-_foomuuri_has_ssh: >-
-  {%- set ns = namespace(found=false) -%}
-  {%- for section, rules in _foomuuri_rules_merged.items() if section is match('.*-localhost$') -%}
-  {%- for rule in rules if rule is search(_foomuuri_ssh_regex) -%}
-  {%- set ns.found = true -%}
-  {%- endfor -%}
-  {%- endfor -%}
-  {{ ns.found }}
-
-# Paths of the extra files this fragment writes.
-_foomuuri_extra_paths: "{{ foomuuri_files | map(attribute='name') | map('regex_replace', '^', foomuuri_managed_dir ~ '/' ~ foomuuri_fragment ~ '--') | list }}"
+# The SSH rule, as a service, for the base fragment.
+foomuuri_ssh_service:
+  name: "{{ 'ssh' if (foomuuri_ssh_port | int) == 22 else (foomuuri_ssh_port | string) }}"
+  protocol: tcp
+  sources: "{{ foomuuri_ssh_sources }}"

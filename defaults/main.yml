@@ -1,120 +1,95 @@
 ---
 # defaults file for foomuuri
 
-# The fragment this run of the role writes. Each run owns one fragment, a
-# file in `/etc/foomuuri/ansible/`. Foomuuri reads fragments in name order and
-# appends rules for a section that appears in more than one fragment, so a
-# later run can add rules without repeating earlier ones.
-# Format: two digits, a dash, then lowercase letters, digits or dashes.
-foomuuri_fragment: 10-base
+# The port SSH listens on. 22 renders the ssh macro, any other port renders
+# "tcp <port>". Set to 0 to render no SSH rule, which also needs
+# foomuuri_require_ssh: false.
+foomuuri_ssh_port: 22
 
-# Set to `absent` to remove the fragment named in `foomuuri_fragment`.
+# Addresses or networks, IPv4 or IPv6, allowed to reach SSH. Empty means any.
+foomuuri_ssh_sources: []
+
+# Extra services to accept from the public zone. A name is a Foomuuri macro
+# (https, domain) or a port number or range (1337, 8000-8010). protocol
+# defaults to foomuuri_default_protocol, sources to any. Use state: absent to
+# leave a service out.
+foomuuri_services: []
+
+# The protocol for a service given as a port number.
+foomuuri_default_protocol: tcp
+
+# Services every host needs to stay reachable.
+foomuuri_base_services:
+  - dhcp-client
+  - dhcpv6-client
+  - ping
+
+# Outgoing traffic: accept, or a list of services to allow. With a list,
+# everything else outgoing is rejected and logged.
+foomuuri_outgoing: accept
+
+# Advanced: settings most callers never change.
+
+# The file this call writes, /etc/foomuuri/<fragment>.conf, and whether it is
+# present or absent.
+foomuuri_fragment: 10-base
 foomuuri_fragment_state: present
 
-# The fragment that holds the `zone` and `foomuuri` sections and the base
-# rules. Other fragments ignore `foomuuri_zones`, `foomuuri_config` and
-# `foomuuri_base_rules`, so these can live in inventory for all hosts.
+# The fragment that holds the foomuuri, zone, SSH, base and outgoing rules.
+# Only one fragment may define the zones.
 foomuuri_base_fragment: 10-base
 
-# What to remove from `/etc/foomuuri`:
-# - `unmanaged`: every `.conf` or `.nft` file the role did not write.
-# - `fragments`: also every managed fragment not listed in this run, see
-#   `foomuuri_keep_fragments`. Only for runs that declare the whole firewall.
-# - `none`: nothing.
+# Remove .conf files in /etc/foomuuri that this call did not write: unmanaged
+# or none. When the role is called more than once, list the other calls'
+# fragments in foomuuri_keep_fragments. Paths in foomuuri_purge_exclude, relative
+# to /etc/foomuuri, are never removed.
 foomuuri_purge: unmanaged
-
-# With `foomuuri_purge: fragments`, other fragments to keep.
 foomuuri_keep_fragments: []
-
-# Files under `/etc/foomuuri` that purge never removes, as full paths.
 foomuuri_purge_exclude: []
 
-# Stop, disable and mask other firewall services (ufw, firewalld,
-# nftables and others). ufw is disabled first, so its rules leave the kernel.
+# Remove ufw and firewalld, and mask nftables.service, whose stop action
+# flushes the whole ruleset.
 foomuuri_disable_conflicting: true
 
-# Run Foomuuri's D-Bus handler, `foomuuri-dbus.service`. It lets
-# NetworkManager move interfaces between zones, and `foomuuri.service` starts
-# it unless it is masked. Hosts whose zones are set in `foomuuri_zones` do not
-# need it, so by default the role stops and masks it.
-# Foomuuri older than 0.31 lets any local user change zones through it
-# (CVE-2025-67603, CVE-2025-67858) unless the distribution has patched its
-# package. Ubuntu 24.04 has the patch only through Ubuntu Pro, so check the
-# installed package before setting this to `true`.
-foomuuri_dbus: false
-
-# Refuse a configuration that has no SSH rule towards `localhost`, checked
-# across all fragments together.
+# Refuse a base fragment that does not accept SSH, to avoid locking out the
+# caller.
 foomuuri_require_ssh: true
 
-# Foomuuri versions older than this are refused.
+# The oldest Foomuuri version the role accepts, read with "foomuuri --version".
 foomuuri_minimum_version: "0.22"
 
-# Connections where the role renders and checks the configuration, but does
-# not start services or change other firewalls. Incus system containers have
-# their own network stack, so `community.general.incus` is not listed.
+# Connections where the service is not started or reloaded, such as Docker
+# containers. The configuration is still written and checked.
 foomuuri_skip_connections:
   - container
   - docker
   - community.docker.docker
 
-# The `foomuuri { }` section: option name to value, as Foomuuri spells them.
-# Base fragment only.
+# Options for the foomuuri { } section, for example dbus_firewalld: "yes".
 foomuuri_config: {}
 
-# The `zone { }` section: zone name to a list of interfaces. `*` means every
-# interface. `localhost` is required. Base fragment only.
+# Zones and their interfaces. A public zone given no interfaces gets
+# foomuuri_public_interfaces.
 foomuuri_zones:
   localhost: []
-  public:
-    - "*"
+  public: []
 
-# Rules written to the base fragment, before `foomuuri_rules`. This matches
-# Foomuuri's own host firewall example: DHCP, ping and SSH in, everything out.
-# Base fragment only.
-foomuuri_base_rules:
-  public-localhost:
-    - dhcp-client
-    - dhcpv6-client
-    - ping
-    - ssh
-  localhost-public:
-    - accept
+# The interfaces of a public zone given none: the catch-all "*" on Foomuuri
+# 0.33 or later, which first supported it, and interface-name wildcards before
+# that.
+foomuuri_public_interfaces: "{{ ['*'] if foomuuri_version.stdout | trim is version('0.33', '>=') else ['eth*', 'en*', 'wl*'] }}"
 
-# Rules for this fragment: section name to a list of Foomuuri rule strings.
-# Any section works, for example `public-localhost`, `snat` or `hook`.
-# A bare `accept`, `drop` or `reject` (with or without `log`) may only be the
-# last rule of a section, and closes that section to later fragments.
-# Variables named `foomuuri_rules__<layer>` are merged after this one, in
-# name order, so inventory can add rules without overwriting each other.
+# Raw Foomuuri rules per zone pair, for anything foomuuri_services cannot
+# express. Rules for public-localhost and localhost-public are added after the
+# role's own rules for those sections.
 foomuuri_rules: {}
-# foomuuri_rules:
-#   public-localhost:
-#     - http
-#     - https
-#     - tcp 8080 saddr 192.0.2.0/24
 
-# The `macro { }` section for this fragment: name to Foomuuri string.
+# Foomuuri macro, iplist and template sections. Macros and iplists map a name
+# to its value, templates map a name to a list of rules.
 foomuuri_macros: {}
-# foomuuri_macros:
-#   admin-nets: 192.0.2.0/24 2001:db8::/32
-
-# The `iplist { }` section for this fragment: name (starting with `@`) to
-# a Foomuuri string of addresses, hostnames, files or URLs.
 foomuuri_iplists: {}
-# foomuuri_iplists:
-#   "@blocklist": 203.0.113.0/24
-
-# `template NAME { }` sections for this fragment: name to a list of rules.
 foomuuri_templates: {}
 
-# Extra files owned by this fragment, written next to it. Use `.conf` for
-# Foomuuri syntax, or `.nft` for raw nftables. Foomuuri includes `.nft` files
-# inside its own `inet foomuuri` table, so they hold chains, sets or
-# counters, never a `table` of their own.
+# Extra files to place in /etc/foomuuri, each with a name and either content
+# or src, and an optional state.
 foomuuri_files: []
-# foomuuri_files:
-#   - name: counters.nft
-#     content: |
-#       counter web_hits {
-#       }

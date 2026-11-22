@@ -1,73 +1,57 @@
 ---
 - name: Create
   hosts: localhost
-  connection: local
   gather_facts: false
-
-  vars:
-    incus_project: fw-test
-    # Containers share the host kernel and cannot load modules, so Incus
-    # loads these on the host before each container starts.
-    incus_kernel_modules:
-      - nf_tables
-      - nf_conntrack
-      - nf_reject_ipv4
-      - nf_reject_ipv6
-      - nft_reject_inet
-      - nf_log_syslog
-
   tasks:
-    - name: Create the Incus project
+    - name: Find existing instances
       ansible.builtin.command:
-        argv:
-          - incus
-          - project
-          - create
-          - "{{ incus_project }}"
-          - -c
-          - features.images=false
-          - -c
-          - features.profiles=false
-      register: _project
-      changed_when: _project.rc == 0
-      failed_when:
-        - _project.rc != 0
-        - "'already exists' not in _project.stderr"
-
-    - name: Launch instances
-      ansible.builtin.command:
-        argv: "{{ ['incus', 'launch', item.image, item.name, '--project', incus_project]
-                  + (['--vm'] if item.incus_vm | default(false) else ['-c', 'linux.kernel_modules=' ~ (incus_kernel_modules | join(','))]) }}"
+        cmd: >-
+          incus info {{ item.name }}
+          --project {{ item.incus_project | default('default') }}
       loop: "{{ molecule_yml.platforms }}"
       loop_control:
         label: "{{ item.name }}"
-      register: _launch
-      changed_when: _launch.rc == 0
-      failed_when:
-        - _launch.rc != 0
-        - "'already exists' not in _launch.stderr"
-
-    - name: Wait for instances to accept commands
-      ansible.builtin.command:
-        argv:
-          - incus
-          - exec
-          - "{{ item.name }}"
-          - --project
-          - "{{ incus_project }}"
-          - --
-          - "true"
-      loop: "{{ molecule_yml.platforms }}"
-      loop_control:
-        label: "{{ item.name }}"
-      register: _ready
-      until: _ready.rc == 0
-      retries: 30
-      delay: 5
+      register: create_existing
       changed_when: false
+      failed_when: false
 
-    - name: Write the instance configuration for Molecule
+    - name: Launch the instances
+      ansible.builtin.command:
+        cmd: >-
+          incus launch {{ item.item.image }} {{ item.item.name }}
+          --project {{ item.item.incus_project | default('default') }}
+      loop: "{{ create_existing.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when: item.rc != 0
+      changed_when: true
+
+    - name: Wait for systemd in the instances
+      ansible.builtin.command:
+        cmd: >-
+          incus exec {{ item.name }}
+          --project {{ item.incus_project | default('default') }}
+          -- systemctl is-system-running --wait
+      loop: "{{ molecule_yml.platforms }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: create_wait
+      changed_when: false
+      failed_when: false
+      until: create_wait.stdout | default('') in ['running', 'degraded']
+      retries: 30
+      delay: 2
+
+    - name: Write the instance config
       ansible.builtin.copy:
-        content: "{{ molecule_yml.platforms | map(attribute='name') | map('community.general.dict_kv', 'instance') | list | to_nice_yaml }}"
+        content: "{{ create_instance_config | from_yaml | to_nice_yaml }}"
         dest: "{{ molecule_instance_config }}"
         mode: "0600"
+      vars:
+        create_instance_config: |
+          {% for platform in molecule_yml.platforms %}
+          - instance: "{{ platform.name }}"
+            address: "{{ platform.name }}"
+            user: root
+            connection: community.general.incus
+          {% endfor %}

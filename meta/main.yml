@@ -1,26 +1,21 @@
 ---
 galaxy_info:
-  author: steelcj
   namespace: steelcj
   role_name: foomuuri
-  description: Build stable nftables firewalls with Foomuuri, from one or more additive passes.
+  author: Christopher Steel
+  description: Install and configure Foomuuri, a zone-based nftables firewall.
   license: Apache-2.0
-  company: Vishpala
   min_ansible_version: "2.15"
 
   platforms:
     - name: Debian
       versions:
         - trixie
-    - name: Ubuntu
-      versions:
-        - noble
 
   galaxy_tags:
     - firewall
     - foomuuri
     - nftables
     - security
-    - system
 
 dependencies: []

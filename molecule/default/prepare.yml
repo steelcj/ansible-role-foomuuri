@@ -1,29 +1,12 @@
 ---
 - name: Prepare
   hosts: all
-  become: true
   gather_facts: false
-
   tasks:
-    - name: Install Python, which Incus images may not include
-      ansible.builtin.raw: test -x /usr/bin/python3 || (apt-get update && apt-get install -y python3)
-      register: _python
-      changed_when: "'Setting up python3' in _python.stdout"
-
-    - name: Install ufw, so the role has a conflicting firewall to disable
-      ansible.builtin.apt:
-        name: ufw
-        state: present
-        update_cache: true
-
-    # The role has to take over from a firewall that is running, not only
-    # installed. SSH is allowed first, as on a raw node at handoff.
-    - name: Allow SSH through ufw
-      community.general.ufw:
-        rule: allow
-        port: "22"
-        proto: tcp
-
-    - name: Enable ufw, so the role takes over from an active firewall
-      community.general.ufw:
-        state: enabled
+    # images:debian/13 has neither Python, which Ansible modules need, nor
+    # sudo, which become needs. robertdebock.bootstrap does this on real hosts.
+    - name: Install Python and sudo
+      ansible.builtin.raw: >-
+        (command -v python3 && command -v sudo) >/dev/null ||
+        (apt-get update -q && apt-get install -y -q python3 sudo)
+      changed_when: false
