@@ -2,6 +2,14 @@
 
 ## Next
 
+### Raise the cloud-init ordering cycle with Foomuuri
+
+On Debian hosts with cloud-init, Foomuuri's units and cloud-init's network stage form a systemd ordering cycle, described in [Foomuuri and cloud-init Form a systemd Ordering Cycle](en/docs/known-issues/cloud-init-ordering-cycle.md). Report it to [Foomuuri](https://github.com/FoobarOy/foomuuri/issues) with the chain of units, ask whether `foomuuri.service` and `foomuuri-boot.service` can run with `DefaultDependencies=no`, and record the outcome in the known-issues document.
+
+### Handle hosts with cloud-init
+
+Decide how the role treats a host where cloud-init is active, from the options in the known-issues document: warn, fail unless the caller chooses, or an opt-in variable that disables cloud-init. Add a Molecule scenario on `images:debian/13/cloud` that reboots and checks that the journal, or the console log in a container, holds no ordering cycle.
+
 ### Test SSH on port 22 with sources
 
 Add a converge case with `foomuuri_ssh_port: 22` and `foomuuri_ssh_sources` set. It renders `ssh saddr …`, the Foomuuri macro followed by an address matcher, which has not yet been through `foomuuri check`. The documented scenario uses port 2222, which renders `tcp 2222 saddr …` instead.

@@ -259,6 +259,12 @@ This role has been written for these platforms:
 
 Other distributions that package Foomuuri, such as Ubuntu and Fedora, and the RHEL family through EPEL, should work, but are not tested yet.
 
+## [Known issues](#known-issues)
+
+| Issue | Affects |
+| :-- | :-- |
+| [Foomuuri and cloud-init form a systemd ordering cycle](en/docs/known-issues/cloud-init-ordering-cycle.md): the host never leaves `starting` after a reboot, and systemd may drop Foomuuri's units to break the cycle | Debian hosts with cloud-init, such as most VPS images |
+
 ## [Roadmap](#roadmap)
 
 Planned and possible work is in [`ROADMAP.md`](ROADMAP.md).

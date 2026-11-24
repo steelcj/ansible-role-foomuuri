@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+Documentation only, no change to the role's behaviour.
+
+- Added `en/docs/known-issues/cloud-init-ordering-cycle.md`: on Debian hosts with cloud-init, Foomuuri's units and cloud-init's network stage form a systemd ordering cycle, so the host never leaves `starting` after a reboot, and systemd may drop Foomuuri's units to break it. Covers how to confirm it, the cause, where it happens, the workarounds and the questions for upstream.
+- README: added a Known issues section linking it.
+- ROADMAP: added raising the cycle with Foomuuri, and handling hosts with cloud-init, with a Molecule scenario on `images:debian/13/cloud`.
+
 ## 0.1.2 (2026-11-22)
 
 Documentation only, no change to the role's behaviour.
